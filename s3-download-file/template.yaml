@@ -3,37 +3,143 @@ Transform: AWS::Serverless-2016-10-31
 Description: >
   s3-download-file
 
-  Sample SAM Template for s3-download-file
+  Sample SAM Template for aws-download-file
 
 # More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
 Globals:
   Function:
-    Timeout: 3
+    Timeout: 10
+
+Parameters:
+    S3DownloadFileSuffix:
+        Type : AWS::SSM::Parameter::Value<String>
+        Default: S3DownloadFileSuffix
 
 Resources:
-  HelloWorldFunction:
+  S3DownloadFileApi:
+      Type: AWS::Serverless::Api
+      Properties:
+        StageName: Prod
+        DefinitionBody:
+          swagger: "2.0"
+          info:
+            version: "0.0.1"
+            title: "S3 download file"
+          basePath: "/Prod"
+          schemes:
+            - "https"
+          paths:
+            /list:
+              get:
+                tags:
+                  - "S3 download file"
+                summary: "ファイルの一覧を返すAPI"
+                description: "ファイルの一覧を返すAPI"
+                produces:
+                  - "application/json"
+                parameters: []
+                responses:
+                  "200":
+                    description: "200 OK"
+                x-amazon-apigateway-integration:
+                  type: aws_proxy
+                  httpMethod: POST
+                  uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ListFunction.Arn}/invocations
+            /download:
+              get:
+                tags:
+                  - "S3 download file"
+                summary: "ファイルのpresigned URLを返すAPI"
+                description: "ファイルのpresigned URLを返すAPI"
+                parameters:
+                  - in: query
+                    name: "path"
+                    type: string
+                    description: "S3オブジェクトキー"
+                responses:
+                  "200":
+                    description: "200 OK"
+                x-amazon-apigateway-integration:
+                  type: aws_proxy
+                  httpMethod: POST
+                  uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${DownloadFunction.Arn}/invocations
+
+  ListFunction:
     Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
     Properties:
-      CodeUri: hello_world/
-      Handler: app.lambda_handler
+      CodeUri: apps/
+      Handler: list.lambda_handler
       Runtime: python3.8
+      Policies:
+        - AmazonS3FullAccess
+        - AmazonSSMReadOnlyAccess
       Events:
-        HelloWorld:
+        List:
           Type: Api # More info about API Event Source: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
           Properties:
-            Path: /hello
+            Path: /list
             Method: get
+            RestApiId: !Ref S3DownloadFileApi
+
+  DownloadFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      CodeUri: apps/
+      Handler: download.lambda_handler
+      Runtime: python3.8
+      Policies:
+        - AmazonS3FullAccess
+        - AmazonSSMReadOnlyAccess
+      Events:
+        Download:
+          Type: Api # More info about API Event Source: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
+          Properties:
+            Path: /download
+            Method: get
+            RestApiId: !Ref S3DownloadFileApi
+
+  S3ListFilesBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "s3-list-files-bucket-${S3DownloadFileSuffix}"
+      AccessControl: Private
+
+  S3ListFilesBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref S3ListFilesBucket
+      PolicyDocument:
+        Statement:
+          Action:
+            - "s3:GetObject"
+          Effect: "Allow"
+          Resource: !Sub "arn:aws:s3:::${S3ListFilesBucket}/*"
+          Principal: "*"
+
+  S3DownloadFileBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "s3-download-file-bucket-${S3DownloadFileSuffix}"
+      AccessControl: Private
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: True
+        BlockPublicPolicy: True
+        IgnorePublicAcls: True
+        RestrictPublicBuckets: True
 
 Outputs:
-  # ServerlessRestApi is an implicit API created out of Events key under Serverless::Function
-  # Find out more about other implicit resources you can reference within SAM
-  # https://github.com/awslabs/serverless-application-model/blob/master/docs/internals/generated_resources.rst#api
-  HelloWorldApi:
-    Description: "API Gateway endpoint URL for Prod stage for Hello World function"
-    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/hello/"
-  HelloWorldFunction:
-    Description: "Hello World Lambda Function ARN"
-    Value: !GetAtt HelloWorldFunction.Arn
-  HelloWorldFunctionIamRole:
-    Description: "Implicit IAM Role created for Hello World function"
-    Value: !GetAtt HelloWorldFunctionRole.Arn
+  ListPy:
+    Description: "list.py"
+    Value: !Sub "${S3DownloadFileApi}"
+  ListHtml:
+    Description: "list.html"
+    Value: !Sub "https://${S3DownloadFileApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/list"
+  AccessUrl:
+    Description: "Access URL"
+    Value: !Sub "https://${S3ListFilesBucket}.s3-${AWS::Region}.amazonaws.com/contents/list.html"
+  S3ListFilesBucket:
+    Description: "S3 bucket name('s3-list-files')"
+    Value: !Ref S3ListFilesBucket
+  S3DownloadFileBucket:
+    Description: "S3 bucket name('s3-download-file')"
+    Value: !Ref S3DownloadFileBucket
